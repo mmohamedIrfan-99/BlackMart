@@ -1,0 +1,343 @@
+package com.blackmart.blackmart.controller;
+
+import com.blackmart.blackmart.dto.ApiResponse;
+import com.blackmart.blackmart.dto.OrderRequest;
+import com.blackmart.blackmart.dto.OrderStatusRequest;
+import com.blackmart.blackmart.model.User;
+import com.blackmart.blackmart.service.OrderService;
+import com.google.gson.Gson;
+
+import javax.servlet.annotation.WebServlet;
+import javax.servlet.http.HttpServlet;
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+import javax.servlet.http.HttpSession;
+import java.io.BufferedReader;
+import java.io.IOException;
+
+@WebServlet("/api/orders")
+public class OrderServlet extends HttpServlet {
+
+    private final OrderService orderService = new OrderService();
+    private final Gson gson = new Gson();
+
+    @Override
+    protected void doGet(HttpServletRequest request,
+                         HttpServletResponse response)
+            throws IOException {
+
+        response.setContentType("application/json");
+        response.setCharacterEncoding("UTF-8");
+
+        try {
+            User user = getSessionUser(request);
+
+            if (user == null) {
+                sendError(response,
+                        HttpServletResponse.SC_UNAUTHORIZED,
+                        "Login required");
+                return;
+            }
+
+            String action = request.getParameter("action");
+
+            if ("my-orders".equalsIgnoreCase(action)) {
+
+                sendSuccess(
+                        response,
+                        "Orders loaded successfully",
+                        orderService.getBuyerOrders(user.getId())
+                );
+
+            } else if ("items".equalsIgnoreCase(action)) {
+
+                Long orderId =
+                        Long.parseLong(request.getParameter("orderId"));
+
+                sendSuccess(
+                        response,
+                        "Order items loaded successfully",
+                        orderService.getOrderItems(orderId)
+                );
+
+            } else if ("seller-orders".equalsIgnoreCase(action)) {
+
+                if (!"SELLER".equalsIgnoreCase(user.getRole())) {
+                    sendError(response,
+                            HttpServletResponse.SC_FORBIDDEN,
+                            "Seller access required");
+                    return;
+                }
+
+                sendSuccess(
+                        response,
+                        "Seller orders loaded successfully",
+                        orderService.getSellerOrders(user.getId())
+                );
+
+            } else if ("all".equalsIgnoreCase(action)) {
+
+                if (!"ADMIN".equalsIgnoreCase(user.getRole())) {
+                    sendError(response,
+                            HttpServletResponse.SC_FORBIDDEN,
+                            "Admin access required");
+                    return;
+                }
+
+                sendSuccess(
+                        response,
+                        "All orders loaded successfully",
+                        orderService.getAllOrders()
+                );
+
+            } else if ("single".equalsIgnoreCase(action)) {
+
+                Long orderId =
+                        Long.parseLong(request.getParameter("id"));
+
+                sendSuccess(
+                        response,
+                        "Order loaded successfully",
+                        orderService.getOrder(orderId)
+                );
+
+            } else {
+
+                sendError(response,
+                        HttpServletResponse.SC_BAD_REQUEST,
+                        "Invalid order action");
+            }
+
+        } catch (Exception e) {
+            sendError(response,
+                    HttpServletResponse.SC_BAD_REQUEST,
+                    getMessage(e));
+        }
+    }
+
+    @Override
+    protected void doPost(HttpServletRequest request,
+                          HttpServletResponse response)
+            throws IOException {
+
+        response.setContentType("application/json");
+        response.setCharacterEncoding("UTF-8");
+
+        try {
+            User user = getSessionUser(request);
+
+            if (user == null) {
+                sendError(response,
+                        HttpServletResponse.SC_UNAUTHORIZED,
+                        "Login required");
+                return;
+            }
+
+            String action = request.getParameter("action");
+
+            if ("checkout".equalsIgnoreCase(action)) {
+
+                if (!"BUYER".equalsIgnoreCase(user.getRole())) {
+                    sendError(response,
+                            HttpServletResponse.SC_FORBIDDEN,
+                            "Buyer access required");
+                    return;
+                }
+
+                checkout(request, response, user);
+
+            } else if ("status".equalsIgnoreCase(action)) {
+
+                updateStatus(request, response, user);
+
+            } else {
+
+                sendError(response,
+                        HttpServletResponse.SC_BAD_REQUEST,
+                        "Invalid order action");
+            }
+
+        } catch (Exception e) {
+            sendError(response,
+                    HttpServletResponse.SC_BAD_REQUEST,
+                    getMessage(e));
+        }
+    }
+
+    private void checkout(HttpServletRequest request,
+                          HttpServletResponse response,
+                          User buyer)
+            throws IOException {
+
+        OrderRequest orderRequest = readOrderRequest(request);
+
+        if (orderRequest == null ||
+                orderRequest.getShippingAddress() == null ||
+                orderRequest.getShippingAddress().trim().isEmpty()) {
+
+            sendError(response,
+                    HttpServletResponse.SC_BAD_REQUEST,
+                    "Shipping address is required");
+            return;
+        }
+
+        Object order = orderService.checkout(
+                buyer.getId(),
+                orderRequest.getShippingAddress()
+        );
+
+        response.setStatus(HttpServletResponse.SC_CREATED);
+
+        sendSuccess(
+                response,
+                "Order placed successfully",
+                order
+        );
+    }
+
+    private void updateStatus(HttpServletRequest request,
+                              HttpServletResponse response,
+                              User user)
+            throws IOException {
+
+        if (!"SELLER".equalsIgnoreCase(user.getRole()) &&
+                !"ADMIN".equalsIgnoreCase(user.getRole())) {
+
+            sendError(response,
+                    HttpServletResponse.SC_FORBIDDEN,
+                    "Seller or admin access required");
+            return;
+        }
+
+        OrderStatusRequest statusRequest =
+                readStatusRequest(request);
+
+        if (statusRequest == null ||
+                statusRequest.getOrderId() == null ||
+                statusRequest.getStatus() == null ||
+                statusRequest.getStatus().trim().isEmpty()) {
+
+            sendError(response,
+                    HttpServletResponse.SC_BAD_REQUEST,
+                    "Order ID and status are required");
+            return;
+        }
+
+        Object order;
+
+        if ("SELLER".equalsIgnoreCase(user.getRole())) {
+
+            order = orderService.updateSellerOrderStatus(
+                    statusRequest.getOrderId(),
+                    user.getId(),
+                    statusRequest.getStatus()
+            );
+
+        } else {
+
+            order = orderService.updateOrderStatus(
+                    statusRequest.getOrderId(),
+                    statusRequest.getStatus()
+            );
+        }
+
+        sendSuccess(
+                response,
+                "Order status updated successfully",
+                order
+        );
+    }
+
+    private OrderRequest readOrderRequest(HttpServletRequest request)
+            throws IOException {
+
+        String body = readBody(request);
+
+        return gson.fromJson(body, OrderRequest.class);
+    }
+
+    private OrderStatusRequest readStatusRequest(
+            HttpServletRequest request)
+            throws IOException {
+
+        String body = readBody(request);
+
+        return gson.fromJson(
+                body,
+                OrderStatusRequest.class
+        );
+    }
+
+    private String readBody(HttpServletRequest request)
+            throws IOException {
+
+        StringBuilder body = new StringBuilder();
+
+        try (BufferedReader reader = request.getReader()) {
+            String line;
+
+            while ((line = reader.readLine()) != null) {
+                body.append(line);
+            }
+        }
+
+        return body.toString();
+    }
+
+    private User getSessionUser(HttpServletRequest request) {
+
+        HttpSession session = request.getSession(false);
+
+        if (session == null) {
+            return null;
+        }
+
+        Object user = session.getAttribute("user");
+
+        if (user instanceof User) {
+            return (User) user;
+        }
+
+        return null;
+    }
+
+    private void sendSuccess(HttpServletResponse response,
+                             String message,
+                             Object data)
+            throws IOException {
+
+        response.getWriter().write(
+                gson.toJson(
+                        ApiResponse.success(
+                                message,
+                                data
+                        )
+                )
+        );
+    }
+
+    private void sendError(HttpServletResponse response,
+                           int status,
+                           String message)
+            throws IOException {
+
+        response.setStatus(status);
+
+        response.getWriter().write(
+                gson.toJson(
+                        ApiResponse.error(message)
+                )
+        );
+    }
+
+    private String getMessage(Exception e) {
+
+        if (e.getMessage() == null ||
+                e.getMessage().trim().isEmpty()) {
+
+            return "Order operation failed";
+        }
+
+        return e.getMessage();
+    }
+}
