@@ -1,0 +1,312 @@
+package com.blackmart.blackmart.controller;
+
+import com.blackmart.blackmart.dto.ApiResponse;
+import com.blackmart.blackmart.dto.ProductRequest;
+import com.blackmart.blackmart.model.Product;
+import com.blackmart.blackmart.model.User;
+import com.blackmart.blackmart.service.ProductService;
+import com.google.gson.Gson;
+
+import javax.servlet.annotation.WebServlet;
+import javax.servlet.http.HttpServlet;
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+import javax.servlet.http.HttpSession;
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.math.BigDecimal;
+import java.util.List;
+
+@WebServlet("/api/products")
+public class ProductServlet extends HttpServlet {
+
+    private final ProductService productService = new ProductService();
+    private final Gson gson = new Gson();
+
+    @Override
+    protected void doGet(HttpServletRequest request,
+                         HttpServletResponse response)
+            throws IOException {
+
+        response.setContentType("application/json");
+        response.setCharacterEncoding("UTF-8");
+
+        try {
+            String action = request.getParameter("action");
+
+            if ("my-products".equalsIgnoreCase(action)) {
+
+                User seller = getSessionUser(request);
+
+                if (seller == null ||
+                        !"SELLER".equalsIgnoreCase(seller.getRole())) {
+                    sendError(response,
+                            HttpServletResponse.SC_FORBIDDEN,
+                            "Seller login required");
+                    return;
+                }
+
+                List<Product> products =
+                        productService.getSellerProducts(seller.getId());
+
+                sendSuccess(response,
+                        "Seller products loaded",
+                        products);
+
+            } else if ("single".equalsIgnoreCase(action)) {
+
+                Long productId =
+                        Long.parseLong(request.getParameter("id"));
+
+                Product product =
+                        productService.findById(productId);
+
+                if (product == null) {
+                    sendError(response,
+                            HttpServletResponse.SC_NOT_FOUND,
+                            "Product not found");
+                    return;
+                }
+
+                sendSuccess(response,
+                        "Product loaded",
+                        product);
+
+            } else {
+
+                String search = request.getParameter("search");
+                String category = request.getParameter("category");
+
+                List<Product> products =
+                        productService.browseProducts(search, category);
+
+                sendSuccess(response,
+                        "Products loaded",
+                        products);
+            }
+
+        } catch (Exception e) {
+            sendError(response,
+                    HttpServletResponse.SC_BAD_REQUEST,
+                    getMessage(e));
+        }
+    }
+
+    @Override
+    protected void doPost(HttpServletRequest request,
+                          HttpServletResponse response)
+            throws IOException {
+
+        response.setContentType("application/json");
+        response.setCharacterEncoding("UTF-8");
+
+        try {
+            String action = request.getParameter("action");
+
+            if ("create".equalsIgnoreCase(action)) {
+                createProduct(request, response);
+
+            } else if ("update".equalsIgnoreCase(action)) {
+                updateProduct(request, response);
+
+            } else if ("delete".equalsIgnoreCase(action)) {
+                deleteProduct(request, response);
+
+            } else if ("status".equalsIgnoreCase(action)) {
+                updateStatus(request, response);
+
+            } else {
+                sendError(response,
+                        HttpServletResponse.SC_BAD_REQUEST,
+                        "Invalid product action");
+            }
+
+        } catch (Exception e) {
+            sendError(response,
+                    HttpServletResponse.SC_BAD_REQUEST,
+                    getMessage(e));
+        }
+    }
+
+    private void createProduct(HttpServletRequest request,
+                               HttpServletResponse response)
+            throws IOException {
+
+        User seller = getSessionUser(request);
+
+        if (seller == null ||
+                !"SELLER".equalsIgnoreCase(seller.getRole())) {
+            sendError(response,
+                    HttpServletResponse.SC_FORBIDDEN,
+                    "Seller login required");
+            return;
+        }
+
+        ProductRequest productRequest = readRequest(request);
+
+        Product product = productService.createProduct(
+                seller.getId(),
+                productRequest
+        );
+
+        response.setStatus(HttpServletResponse.SC_CREATED);
+
+        sendSuccess(response,
+                "Product created successfully",
+                product);
+    }
+
+    private void updateProduct(HttpServletRequest request,
+                               HttpServletResponse response)
+            throws IOException {
+
+        User seller = getSessionUser(request);
+
+        if (seller == null ||
+                !"SELLER".equalsIgnoreCase(seller.getRole())) {
+            sendError(response,
+                    HttpServletResponse.SC_FORBIDDEN,
+                    "Seller login required");
+            return;
+        }
+
+        Long productId =
+                Long.parseLong(request.getParameter("id"));
+
+        ProductRequest productRequest = readRequest(request);
+
+        Product product = productService.updateProduct(
+                productId,
+                seller.getId(),
+                productRequest
+        );
+
+        sendSuccess(response,
+                "Product updated successfully",
+                product);
+    }
+
+    private void deleteProduct(HttpServletRequest request,
+                               HttpServletResponse response)
+            throws IOException {
+
+        User seller = getSessionUser(request);
+
+        if (seller == null ||
+                !"SELLER".equalsIgnoreCase(seller.getRole())) {
+            sendError(response,
+                    HttpServletResponse.SC_FORBIDDEN,
+                    "Seller login required");
+            return;
+        }
+
+        Long productId =
+                Long.parseLong(request.getParameter("id"));
+
+        productService.deleteProduct(
+                productId,
+                seller.getId()
+        );
+
+        sendSuccess(response,
+                "Product deleted successfully",
+                null);
+    }
+
+    private void updateStatus(HttpServletRequest request,
+                              HttpServletResponse response)
+            throws IOException {
+
+        User user = getSessionUser(request);
+
+        if (user == null ||
+                !"ADMIN".equalsIgnoreCase(user.getRole())) {
+            sendError(response,
+                    HttpServletResponse.SC_FORBIDDEN,
+                    "Admin login required");
+            return;
+        }
+
+        Long productId =
+                Long.parseLong(request.getParameter("id"));
+
+        String status =
+                request.getParameter("status");
+
+        Product product =
+                productService.updateStatus(productId, status);
+
+        sendSuccess(response,
+                "Product status updated",
+                product);
+    }
+
+    private ProductRequest readRequest(HttpServletRequest request)
+            throws IOException {
+
+        StringBuilder body = new StringBuilder();
+
+        try (BufferedReader reader = request.getReader()) {
+            String line;
+
+            while ((line = reader.readLine()) != null) {
+                body.append(line);
+            }
+        }
+
+        return gson.fromJson(body.toString(), ProductRequest.class);
+    }
+
+    private User getSessionUser(HttpServletRequest request) {
+
+        HttpSession session = request.getSession(false);
+
+        if (session == null) {
+            return null;
+        }
+
+        Object user = session.getAttribute("user");
+
+        if (user instanceof User) {
+            return (User) user;
+        }
+
+        return null;
+    }
+
+    private void sendSuccess(HttpServletResponse response,
+                             String message,
+                             Object data)
+            throws IOException {
+
+        response.getWriter().write(
+                gson.toJson(
+                        ApiResponse.success(message, data)
+                )
+        );
+    }
+
+    private void sendError(HttpServletResponse response,
+                           int status,
+                           String message)
+            throws IOException {
+
+        response.setStatus(status);
+
+        response.getWriter().write(
+                gson.toJson(
+                        ApiResponse.error(message)
+                )
+        );
+    }
+
+    private String getMessage(Exception e) {
+
+        if (e.getMessage() == null ||
+                e.getMessage().trim().isEmpty()) {
+            return "Product operation failed";
+        }
+
+        return e.getMessage();
+    }
+}
