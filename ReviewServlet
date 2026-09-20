@@ -1,0 +1,216 @@
+package com.blackmart.blackmart.controller;
+
+import com.blackmart.blackmart.dto.ApiResponse;
+import com.blackmart.blackmart.dto.ReviewRequest;
+import com.blackmart.blackmart.model.User;
+import com.blackmart.blackmart.service.ReviewService;
+import com.google.gson.Gson;
+
+import javax.servlet.annotation.WebServlet;
+import javax.servlet.http.HttpServlet;
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+import javax.servlet.http.HttpSession;
+import java.io.BufferedReader;
+import java.io.IOException;
+
+@WebServlet("/api/reviews")
+public class ReviewServlet extends HttpServlet {
+
+    private final ReviewService reviewService = new ReviewService();
+    private final Gson gson = new Gson();
+
+    @Override
+    protected void doGet(HttpServletRequest request,
+                         HttpServletResponse response)
+            throws IOException {
+
+        response.setContentType("application/json");
+        response.setCharacterEncoding("UTF-8");
+
+        try {
+            String productIdParam =
+                    request.getParameter("productId");
+
+            if (productIdParam == null ||
+                    productIdParam.trim().isEmpty()) {
+
+                sendError(
+                        response,
+                        HttpServletResponse.SC_BAD_REQUEST,
+                        "Product ID is required"
+                );
+                return;
+            }
+
+            Long productId =
+                    Long.parseLong(productIdParam);
+
+            sendSuccess(
+                    response,
+                    "Reviews loaded successfully",
+                    reviewService.getProductReviews(productId)
+            );
+
+        } catch (Exception e) {
+
+            sendError(
+                    response,
+                    HttpServletResponse.SC_BAD_REQUEST,
+                    getMessage(e)
+            );
+        }
+    }
+
+    @Override
+    protected void doPost(HttpServletRequest request,
+                          HttpServletResponse response)
+            throws IOException {
+
+        response.setContentType("application/json");
+        response.setCharacterEncoding("UTF-8");
+
+        try {
+            User buyer = getBuyer(request);
+
+            if (buyer == null) {
+                sendError(
+                        response,
+                        HttpServletResponse.SC_UNAUTHORIZED,
+                        "Buyer login required"
+                );
+                return;
+            }
+
+            ReviewRequest reviewRequest =
+                    readRequest(request);
+
+            if (reviewRequest == null ||
+                    reviewRequest.getProductId() == null) {
+
+                sendError(
+                        response,
+                        HttpServletResponse.SC_BAD_REQUEST,
+                        "Product ID is required"
+                );
+                return;
+            }
+
+            reviewService.createReview(
+                    buyer.getId(),
+                    reviewRequest
+            );
+
+            sendSuccess(
+                    response,
+                    "Review submitted successfully",
+                    reviewService.getProductReviews(
+                            reviewRequest.getProductId()
+                    )
+            );
+
+        } catch (Exception e) {
+
+            sendError(
+                    response,
+                    HttpServletResponse.SC_BAD_REQUEST,
+                    getMessage(e)
+            );
+        }
+    }
+
+    private ReviewRequest readRequest(
+            HttpServletRequest request)
+            throws IOException {
+
+        StringBuilder body =
+                new StringBuilder();
+
+        try (BufferedReader reader =
+                     request.getReader()) {
+
+            String line;
+
+            while ((line = reader.readLine()) != null) {
+                body.append(line);
+            }
+        }
+
+        return gson.fromJson(
+                body.toString(),
+                ReviewRequest.class
+        );
+    }
+
+    private User getBuyer(
+            HttpServletRequest request) {
+
+        HttpSession session =
+                request.getSession(false);
+
+        if (session == null) {
+            return null;
+        }
+
+        Object user =
+                session.getAttribute("user");
+
+        if (!(user instanceof User)) {
+            return null;
+        }
+
+        User buyer = (User) user;
+
+        if (!"BUYER".equalsIgnoreCase(
+                buyer.getRole())) {
+
+            return null;
+        }
+
+        return buyer;
+    }
+
+    private void sendSuccess(
+            HttpServletResponse response,
+            String message,
+            Object data)
+            throws IOException {
+
+        response.getWriter().write(
+                gson.toJson(
+                        ApiResponse.success(
+                                message,
+                                data
+                        )
+                )
+        );
+    }
+
+    private void sendError(
+            HttpServletResponse response,
+            int status,
+            String message)
+            throws IOException {
+
+        response.setStatus(status);
+
+        response.getWriter().write(
+                gson.toJson(
+                        ApiResponse.error(
+                                message
+                        )
+                )
+        );
+    }
+
+    private String getMessage(Exception e) {
+
+        if (e.getMessage() == null ||
+                e.getMessage().trim().isEmpty()) {
+
+            return "Review operation failed";
+        }
+
+        return e.getMessage();
+    }
+}
